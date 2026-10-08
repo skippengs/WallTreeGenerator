@@ -21,7 +21,7 @@ sun.position.set(-1500, 3000, 4000);
 scene.add(sun);
 
 const params: TreeParams = { ...defaultParams };
-const view = { showParts: false, partGap: 30 };
+const view = { mode: 'Assembled', partGap: 30 };
 const wallMat = new THREE.MeshStandardMaterial({ color: 0x2b313c, side: THREE.DoubleSide });
 const ceilMat = new THREE.MeshBasicMaterial({ color: 0x20252e, side: THREE.DoubleSide });
 const woods = [new THREE.MeshStandardMaterial({ color: 0x8a5f3c, flatShading: true }), new THREE.MeshStandardMaterial({ color: 0x6b7f4a, flatShading: true })];
@@ -49,7 +49,7 @@ function rebuild() {
   disposeGroup(room);
   shells = buildTree(params);
   let note = '';
-  if (view.showParts) {
+  if (view.mode === 'Parts (exploded)') {
     const parts = splitIntoParts(shells, params);
     for (const p of parts) {
       const m = new THREE.Mesh(geometry(p.tris), woods[(p.ix + p.iy) & 1 ? 1 : 0]);
@@ -87,22 +87,38 @@ const schedule = () => {
   timer = window.setTimeout(rebuild, 300);
 };
 
+function download(blob: Blob, name: string) {
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = name;
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
+function exportAssembled() {
+  const all = new Float32Array(shells.reduce((s, a) => s + a.length, 0));
+  let o = 0;
+  for (const s of shells) {
+    all.set(s, o);
+    o += s.length;
+  }
+  download(new Blob([toStl(all) as BlobPart], { type: 'model/stl' }), 'wall-tree-assembled.stl');
+}
+
 function exportParts() {
   const parts = splitIntoParts(shells, params);
   const files = parts.map((p) => ({
     name: `tree_x${p.ix}_y${p.iy}.stl`,
     data: toStl(p.tris, params.gridOffsetX + p.ix * params.bedX, p.iy * params.bedY),
   }));
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(zip(files));
-  a.download = 'wall-tree-parts.zip';
-  a.click();
-  URL.revokeObjectURL(a.href);
+  download(zip(files), 'wall-tree-parts.zip');
 }
 
 const gui = new GUI({ title: 'Wall Tree (mm)' });
 const add = (folder: GUI, key: keyof TreeParams, min: number, max: number, step: number, name: string) =>
   folder.add(params, key, min, max, step).name(name).onChange(schedule);
+gui.add(view, 'mode', ['Assembled', 'Parts (exploded)']).name('View').onChange(schedule);
+gui.add(view, 'partGap', 0, 150, 1).name('Part gap (parts view)').onChange(schedule);
 const room_ = gui.addFolder('Room & trunk');
 add(room_, 'roomHeight', 1800, 4000, 10, 'Room height');
 add(room_, 'trunkDiameter', 80, 600, 5, 'Trunk diameter');
@@ -123,9 +139,8 @@ const pr = gui.addFolder('Printing');
 add(pr, 'bedX', 100, 600, 1, 'Bed width');
 add(pr, 'bedY', 100, 600, 1, 'Bed depth');
 add(pr, 'gridOffsetX', 0, 600, 1, 'Cut grid shift X');
-pr.add(view, 'showParts').name('Show parts').onChange(schedule);
-pr.add(view, 'partGap', 0, 150, 1).name('Part gap (preview)').onChange(schedule);
 pr.add({ exportParts }, 'exportParts').name('Download parts (.zip)');
+pr.add({ exportAssembled }, 'exportAssembled').name('Download assembled (.stl)');
 if (window.innerWidth < 600) gui.close();
 
 function resize() {
