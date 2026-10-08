@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import GUI from 'lil-gui';
-import { buildTree, defaultParams, splitIntoParts, type TreeParams } from './treegen';
+import { buildTree, defaultParams, partName, printOrientation, splitIntoParts, type TreeParams } from './treegen';
 import { toStl, zip } from './export';
 
 const container = document.getElementById('view')!;
@@ -52,8 +52,10 @@ function rebuild() {
   if (view.mode === 'Parts (exploded)') {
     const parts = splitIntoParts(shells, params);
     for (const p of parts) {
-      const m = new THREE.Mesh(geometry(p.tris), woods[(p.ix + p.iy) & 1 ? 1 : 0]);
-      m.position.set(p.ix * view.partGap, p.iy * view.partGap, 0);
+      const m = new THREE.Mesh(geometry(p.tris), woods[(p.i + p.j + (p.zone === 'wall' ? 0 : 1)) & 1 ? 1 : 0]);
+      const g = view.partGap;
+      if (p.zone === 'wall') m.position.set(p.i * g, p.j * g, 0);
+      else m.position.set(p.i * g, g, p.j * g);
       treeGroup.add(m);
     }
     note = ` · ${parts.length} parts`;
@@ -76,7 +78,7 @@ function rebuild() {
   room.add(wall, ceil, new THREE.GridHelper(6000, 24, 0x445, 0x334));
   const grid = room.children[2];
   grid.position.set(0, -0.5, 1500);
-  controls.target.set(0, H * 0.5, 0);
+  controls.target.set(0, H * 0.55, 500);
   const ms = Math.round(performance.now() - t0);
   info.textContent = `${(H / 1000).toFixed(2)} m room${note} · built in ${ms} ms`;
 }
@@ -107,10 +109,7 @@ function exportAssembled() {
 
 function exportParts() {
   const parts = splitIntoParts(shells, params);
-  const files = parts.map((p) => ({
-    name: `tree_x${p.ix}_y${p.iy}.stl`,
-    data: toStl(p.tris, params.gridOffsetX + p.ix * params.bedX, p.iy * params.bedY),
-  }));
+  const files = parts.map((p) => ({ name: `${partName(p)}.stl`, data: toStl(printOrientation(p, params)) }));
   download(zip(files), 'wall-tree-parts.zip');
 }
 
@@ -122,8 +121,9 @@ gui.add(view, 'partGap', 0, 150, 1).name('Part gap (parts view)').onChange(sched
 const room_ = gui.addFolder('Room & trunk');
 add(room_, 'roomHeight', 1800, 4000, 10, 'Room height');
 add(room_, 'trunkDiameter', 80, 600, 5, 'Trunk diameter');
-add(room_, 'forkHeight', 0.25, 0.8, 0.01, 'Fork height (x room)');
-add(room_, 'protrusion', 0.3, 1, 0.01, 'Depth (0.5 = half round)');
+add(room_, 'forkHeight', 0.25, 0.8, 0.01, 'Fork height (branches on wall)');
+add(room_, 'protrusion', 0.55, 1, 0.01, 'Depth (0.5 = half round)');
+room_.add(params, 'trunkOnly').name('Only trunk on the wall').onChange(schedule);
 const br = gui.addFolder('Branches');
 add(br, 'mainBranches', 1, 8, 1, 'Main branches');
 add(br, 'spreadAngle', 0, 90, 1, 'Spread angle (°)');
@@ -138,6 +138,8 @@ add(bk, 'barkScale', 8, 40, 1, 'Bark feature size');
 const pr = gui.addFolder('Printing');
 add(pr, 'bedX', 100, 600, 1, 'Bed width');
 add(pr, 'bedY', 100, 600, 1, 'Bed depth');
+add(pr, 'bedZ', 50, 600, 1, 'Max part height');
+add(pr, 'ceilingBand', 100, 600, 1, 'Ceiling zone height');
 add(pr, 'gridOffsetX', 0, 600, 1, 'Cut grid shift X');
 pr.add({ exportParts }, 'exportParts').name('Download parts (.zip)');
 pr.add({ exportAssembled }, 'exportAssembled').name('Download assembled (.stl)');
@@ -152,7 +154,7 @@ function resize() {
 }
 window.addEventListener('resize', resize);
 resize();
-camera.position.set(1500, 1700, 7000);
+camera.position.set(3200, 900, 6200);
 rebuild();
 renderer.setAnimationLoop(() => {
   controls.update();

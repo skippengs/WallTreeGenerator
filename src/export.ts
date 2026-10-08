@@ -1,14 +1,14 @@
-/** Binary STL from a triangle soup, shifted by (-ox, -oy, 0). */
-export function toStl(tris: Float32Array, ox = 0, oy = 0): Uint8Array {
+/** Binary STL from a triangle soup. */
+export function toStl(tris: Float32Array): Uint8Array {
   const n = tris.length / 9;
   const buf = new ArrayBuffer(84 + n * 50);
   const dv = new DataView(buf);
   dv.setUint32(80, n, true);
   let o = 84;
   for (let i = 0; i < tris.length; i += 9) {
-    const a = [tris[i] - ox, tris[i + 1] - oy, tris[i + 2]];
-    const b = [tris[i + 3] - ox, tris[i + 4] - oy, tris[i + 5]];
-    const c = [tris[i + 6] - ox, tris[i + 7] - oy, tris[i + 8]];
+    const a = [tris[i], tris[i + 1], tris[i + 2]];
+    const b = [tris[i + 3], tris[i + 4], tris[i + 5]];
+    const c = [tris[i + 6], tris[i + 7], tris[i + 8]];
     const ux = b[0] - a[0], uy = b[1] - a[1], uz = b[2] - a[2];
     const vx = c[0] - a[0], vy = c[1] - a[1], vz = c[2] - a[2];
     let nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx;

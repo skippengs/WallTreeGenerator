@@ -2,12 +2,13 @@ import * as THREE from 'three';
 import type { NoiseFunction3D } from 'simplex-noise';
 
 export interface TubeOpts {
-  /** Centerline control points in the wall plane (z is ignored). */
+  /** Centerline control points (wall branches keep z = 0, ceiling branches run into the room). */
   pts: THREE.Vector3[];
   /** Radius (mm) along the tube, s in 0..1. */
   radius: (s: number) => number;
-  /** Fraction of the tube diameter that stands out from the wall when cut flat (0.5 = half round). */
+  /** Fraction of the tube diameter that stands out from the wall / hangs from the ceiling when cut flat (0.5 = half round). */
   protrusion: number;
+  ceilingY: number;
   barkDepth: number;
   /** Size of one bark feature in mm; also sets the mesh density. */
   barkScale: number;
@@ -37,7 +38,7 @@ export function buildTube(o: TubeOpts): Float32Array {
     const P = curve.getPointAt(u);
     const T = curve.getTangentAt(u).normalize();
     if (i === 0) {
-      N = new THREE.Vector3().crossVectors(T, zAxis).normalize();
+      N = new THREE.Vector3().crossVectors(T, Math.abs(T.z) > 0.9 ? new THREE.Vector3(1, 0, 0) : zAxis).normalize();
     } else {
       // parallel transport keeps the frame free of twist
       const axis = new THREE.Vector3().crossVectors(prevT, T);
@@ -53,7 +54,9 @@ export function buildTube(o: TubeOpts): Float32Array {
     const r = o.radius(u);
     const s = u * length;
     const c = P.clone();
-    c.z = r * (2 * o.protrusion - 1);
+    const k = r * (2 * o.protrusion - 1);
+    c.z = Math.max(c.z, k);
+    c.y = Math.min(c.y, o.ceilingY - k);
     centers.push(c);
     const row: THREE.Vector3[] = [];
     const amp = Math.min(o.barkDepth, r * 0.3);

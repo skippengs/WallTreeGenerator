@@ -42,7 +42,14 @@ function cut(a: number[], b: number[], pl: Plane): number[] {
   return p;
 }
 
-export function clip(tris: Float32Array, pl: Plane): Float32Array {
+/**
+ * Planes are nudged by three microns so no mesh vertex lies exactly on them (tubes have rings
+ * that sit exactly on the wall plane, which would make the cut run along mesh edges).
+ */
+const NUDGE = 3.1e-3;
+
+export function clip(tris: Float32Array, pl0: Plane): Float32Array {
+  const pl: Plane = { ...pl0, pos: pl0.pos + NUDGE };
   const { axis, sign, pos } = pl;
   const out: number[] = [];
   const seg: number[][][] = []; // directed boundary edges lying on the plane
@@ -93,25 +100,73 @@ export function clip(tris: Float32Array, pl: Plane): Float32Array {
     if (l) l.push(i);
     else byStart.set(k, [i]);
   });
+  const TOL = 0.004; // mm; chain ends that miss by a few microns still join up
+  const cellOf = (x: number, y: number, z: number): [number, number, number] =>
+    [Math.floor(x / TOL), Math.floor(y / TOL), Math.floor(z / TOL)];
+  const cells = new Map<string, number[]>();
+  seg.forEach((sg, idx) => {
+    const c = cellOf(sg[0][0], sg[0][1], sg[0][2]);
+    const ck = c.join(',');
+    const l = cells.get(ck);
+    if (l) l.push(idx);
+    else cells.set(ck, [idx]);
+  });
+  const near = (e: number[], used: Uint8Array): number => {
+    const c = cellOf(e[0], e[1], e[2]);
+    let best = -1;
+    let bd = TOL;
+    for (let dx = -1; dx <= 1; dx++)
+      for (let dy = -1; dy <= 1; dy++)
+        for (let dz = -1; dz <= 1; dz++) {
+          for (const j of cells.get(`${c[0] + dx},${c[1] + dy},${c[2] + dz}`) ?? []) {
+            if (used[j]) continue;
+            const d = Math.hypot(seg[j][0][0] - e[0], seg[j][0][1] - e[1], seg[j][0][2] - e[2]);
+            if (d < bd) {
+              bd = d;
+              best = j;
+            }
+          }
+        }
+    return best;
+  };
   const used = new Uint8Array(seg.length);
   const loops: number[][][] = [];
   for (let i = 0; i < seg.length; i++) {
     if (used[i]) continue;
-    const loop: number[][] = [];
-    const startKey = key(seg[i][0][0], seg[i][0][1], seg[i][0][2]);
+    // walk the boundary; whenever it returns to a vertex it has already visited, that part is a closed loop
+    const stack: number[][] = [];
+    const keys: string[] = [];
+    const where = new Map<string, number>();
     let cur = i;
-    let closed = false;
+    let lastEnd = '';
+    let lastPt: number[] = seg[i][0];
     while (cur >= 0 && !used[cur]) {
       used[cur] = 1;
-      loop.push(seg[cur][0]);
-      const ek = key(seg[cur][1][0], seg[cur][1][1], seg[cur][1][2]);
-      if (ek === startKey) {
-        closed = true;
-        break;
+      const sp = seg[cur][0];
+      const sk = key(sp[0], sp[1], sp[2]);
+      const at = where.get(sk);
+      if (at !== undefined) {
+        const sub = stack.splice(at);
+        keys.splice(at).forEach((k) => where.delete(k));
+        if (sub.length >= 3) loops.push(sub);
       }
-      cur = (byStart.get(ek) ?? []).find((j) => !used[j]) ?? -1;
+      where.set(sk, stack.length);
+      stack.push(sp);
+      keys.push(sk);
+      lastPt = seg[cur][1];
+      lastEnd = key(lastPt[0], lastPt[1], lastPt[2]);
+      cur = (byStart.get(lastEnd) ?? []).find((j) => !used[j]) ?? -1;
+      if (cur < 0 && !where.has(lastEnd)) cur = near(lastPt, used);
     }
-    if (closed && loop.length >= 3) loops.push(loop);
+    let at = where.get(lastEnd);
+    if (at === undefined) {
+      const first = stack.findIndex((q) => Math.hypot(q[0] - lastPt[0], q[1] - lastPt[1], q[2] - lastPt[2]) < TOL);
+      if (first >= 0) at = first;
+    }
+    if (at !== undefined) {
+      const sub = stack.splice(at);
+      if (sub.length >= 3) loops.push(sub);
+    }
   }
   if (loops.length === 0) return Float32Array.from(out);
 
@@ -169,11 +224,18 @@ export function clip(tris: Float32Array, pl: Plane): Float32Array {
       pts = [...pts.slice(0, bo + 1), ...rot, pts[bo], ...pts.slice(bo + 1)];
     }
     const flat = pts.map((p) => [p[a1], p[a2]] as [number, number]);
+    const seen = new Map<string, number[]>();
     for (const [i, j, k] of earClip(flat)) {
+      // a triangle and its mirror image on the same corners cancel out (zero-thickness fin)
+      const kk = [i, j, k].map((n) => key(pts[n][0], pts[n][1], pts[n][2])).sort().join('|');
+      if (seen.has(kk)) {
+        seen.delete(kk);
+        continue;
+      }
       // (a1, a2, axis) is right-handed: counter-clockwise faces +axis, the removed side when sign > 0
-      const order = sign > 0 ? [i, j, k] : [i, k, j];
-      for (const n of order) out.push(pts[n][0], pts[n][1], pts[n][2]);
+      seen.set(kk, sign > 0 ? [i, j, k] : [i, k, j]);
     }
+    for (const t of seen.values()) for (const n of t) out.push(pts[n][0], pts[n][1], pts[n][2]);
   }
   clipStats.holes += holes.length;
   return Float32Array.from(out);
@@ -232,8 +294,12 @@ function earClip(p: [number, number][]): [number, number, number][] {
       i = next[i];
       if (++sinceCut > left) {
         if (relaxed) {
+          // not a simple polygon (self-touching section): fan the rest so the cap stays closed
           clipStats.stuck++;
-          break;
+          const rest: number[] = [i];
+          for (let j = next[i]; j !== i; j = next[j]) rest.push(j);
+          for (let q = 1; q + 1 < rest.length; q++) tris.push([rest[0], rest[q], rest[q + 1]]);
+          return tris;
         }
         relaxed = true;
         sinceCut = 0;
