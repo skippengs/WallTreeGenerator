@@ -21,12 +21,13 @@ sun.position.set(-1500, 3000, 4000);
 scene.add(sun);
 
 const params: TreeParams = { ...defaultParams };
-const view = { mode: 'Assembled', partGap: 30 };
+const view = { mode: 'Assembled', partGap: 30, showRoom: true };
 const wallMat = new THREE.MeshStandardMaterial({ color: 0x2b313c, side: THREE.DoubleSide });
 const ceilMat = new THREE.MeshBasicMaterial({ color: 0x20252e, side: THREE.DoubleSide });
 const woods = [new THREE.MeshStandardMaterial({ color: 0x8a5f3c, flatShading: true }), new THREE.MeshStandardMaterial({ color: 0x6b7f4a, flatShading: true })];
 const room = new THREE.Group();
 scene.add(room);
+room.visible = view.showRoom;
 let treeGroup = new THREE.Group();
 scene.add(treeGroup);
 let shells: Float32Array[] = [];
@@ -117,6 +118,7 @@ const gui = new GUI({ title: 'Wall Tree (mm)' });
 const add = (folder: GUI, key: keyof TreeParams, min: number, max: number, step: number, name: string) =>
   folder.add(params, key, min, max, step).name(name).onChange(schedule);
 gui.add(view, 'mode', ['Assembled', 'Parts (exploded)']).name('View').onChange(schedule);
+gui.add(view, 'showRoom').name('Show room (wall, ceiling, floor)').onChange((v: boolean) => (room.visible = v));
 gui.add(view, 'partGap', 0, 150, 1).name('Part gap (parts view)').onChange(schedule);
 const room_ = gui.addFolder('Room & trunk');
 add(room_, 'roomHeight', 1800, 4000, 10, 'Room height');
