@@ -1,12 +1,22 @@
 /**
- * Axis-aligned plane clipping of closed triangle soups, with capping.
- * Keeps the side where sign * (p[axis] - pos) <= 0 and closes the cut with flat faces,
+ * Plane clipping of closed triangle soups, with capping: the cut is closed with flat faces,
  * so the result is again a closed solid.
+ * An axis plane keeps the side where sign * (p[axis] - pos) <= 0; a general plane keeps n . p <= d.
  */
-export interface Plane {
+export interface AxisPlane {
   axis: 0 | 1 | 2;
   sign: 1 | -1;
   pos: number;
+}
+export interface GeneralPlane {
+  n: [number, number, number];
+  d: number;
+}
+export type Plane = AxisPlane | GeneralPlane;
+
+/** The same plane facing the other way (keeps the other side). */
+export function flipPlane(pl: GeneralPlane): GeneralPlane {
+  return { n: [-pl.n[0], -pl.n[1], -pl.n[2]], d: -pl.d };
 }
 
 const fr = Math.fround;
@@ -28,29 +38,45 @@ export function bounds(tris: Float32Array): [number, number, number, number, num
 }
 
 /** Point on edge a-b where the plane cuts it. Endpoints are ordered so both neighbours get identical results. */
-function cut(a: number[], b: number[], pl: Plane): number[] {
+function cut(a: number[], b: number[], n: number[], d: number, exactAxis: number): number[] {
   if (a[0] > b[0] || (a[0] === b[0] && (a[1] > b[1] || (a[1] === b[1] && a[2] > b[2])))) {
     const t = a;
     a = b;
     b = t;
   }
-  const da = a[pl.axis] - pl.pos;
-  const db = b[pl.axis] - pl.pos;
+  const da = a[0] * n[0] + a[1] * n[1] + a[2] * n[2] - d;
+  const db = b[0] * n[0] + b[1] * n[1] + b[2] * n[2] - d;
   const t = da / (da - db);
   const p = [fr(a[0] + (b[0] - a[0]) * t), fr(a[1] + (b[1] - a[1]) * t), fr(a[2] + (b[2] - a[2]) * t)];
-  p[pl.axis] = fr(pl.pos);
+  if (exactAxis >= 0) p[exactAxis] = fr(d / n[exactAxis]);
   return p;
 }
 
 /**
  * Planes are nudged by three microns so no mesh vertex lies exactly on them (tubes have rings
- * that sit exactly on the wall plane, which would make the cut run along mesh edges).
+ * that sit exactly on the wall plane, which would make the cut run along mesh edges). The nudge
+ * goes the same way in space for a plane and its flipped twin, so the two halves of a cut still meet.
  */
 const NUDGE = 3.1e-3;
 
 export function clip(tris: Float32Array, pl0: Plane): Float32Array {
-  const pl: Plane = { ...pl0, pos: pl0.pos + NUDGE };
-  const { axis, sign, pos } = pl;
+  let n: [number, number, number];
+  let d: number;
+  if ('n' in pl0) {
+    n = pl0.n;
+    d = pl0.d;
+  } else {
+    n = [0, 0, 0];
+    n[pl0.axis] = pl0.sign;
+    d = pl0.sign * pl0.pos;
+  }
+  const first = n[0] !== 0 ? n[0] : n[1] !== 0 ? n[1] : n[2];
+  d += first > 0 ? NUDGE : -NUDGE;
+  let axis: 0 | 1 | 2 = 0;
+  if (Math.abs(n[1]) > Math.abs(n[axis])) axis = 1;
+  if (Math.abs(n[2]) > Math.abs(n[axis])) axis = 2;
+  const exactAxis = Math.abs(n[axis]) === 1 ? axis : -1;
+  const sign = Math.sign(n[axis]);
   const out: number[] = [];
   const seg: number[][][] = []; // directed boundary edges lying on the plane
   const a1 = ((axis + 1) % 3) as 0 | 1 | 2;
@@ -62,7 +88,7 @@ export function clip(tris: Float32Array, pl0: Plane): Float32Array {
       [tris[i + 3], tris[i + 4], tris[i + 5]],
       [tris[i + 6], tris[i + 7], tris[i + 8]],
     ];
-    const ins = v.map((p) => sign * (p[axis] - pos) <= 0);
+    const ins = v.map((p) => p[0] * n[0] + p[1] * n[1] + p[2] * n[2] - d <= 0);
     if (ins[0] && ins[1] && ins[2]) {
       for (const p of v) out.push(p[0], p[1], p[2]);
       continue;
@@ -77,7 +103,7 @@ export function clip(tris: Float32Array, pl0: Plane): Float32Array {
       const b = v[(k + 1) % 3];
       if (ins[k]) poly.push(a);
       if (ins[k] !== ins[(k + 1) % 3]) {
-        const x = cut(a, b, pl);
+        const x = cut(a, b, n, d, exactAxis);
         poly.push(x);
         if (ins[k]) exit = x;
         else enter = x;
@@ -163,10 +189,10 @@ export function clip(tris: Float32Array, pl0: Plane): Float32Array {
       const first = stack.findIndex((q) => Math.hypot(q[0] - lastPt[0], q[1] - lastPt[1], q[2] - lastPt[2]) < TOL);
       if (first >= 0) at = first;
     }
-    if (at !== undefined) {
-      const sub = stack.splice(at);
-      if (sub.length >= 3) loops.push(sub);
-    }
+    // A chain that does not return to its start (a stray gap in the mesh) is closed with a straight edge:
+    // a small error is better than losing the whole cap.
+    const sub = stack.splice(at ?? 0);
+    if (sub.length >= 3) loops.push(sub);
   }
   if (loops.length === 0) return Float32Array.from(out);
 

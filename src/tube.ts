@@ -14,6 +14,10 @@ export interface TubeOpts {
   barkScale: number;
   noise: NoiseFunction3D;
   noiseOffset: number;
+  /** Optional extra radius factor by ring angle and distance along the tube (mm), e.g. root swellings. */
+  radialMod?: (angle: number, s: number) => number;
+  /** Slants the end face (fraction of the end radius), e.g. for a sawn-off branch. */
+  endTilt?: number;
 }
 
 /** Closed tube (flat end caps) with ridged bark displacement, as a triangle soup. */
@@ -68,8 +72,10 @@ export function buildTube(o: TubeOpts): Float32Array {
       const f2 = o.noise(ca * k * 2.7, sa * k * 2.7 + o.noiseOffset, s / (o.barkScale * 1.6));
       const ridge = 1 - Math.abs(f1);
       const h = 0.75 * ridge * ridge + 0.25 * (f2 * 0.5 + 0.5) - 0.5;
-      const rr = r + amp * h * 2;
-      row.push(new THREE.Vector3().copy(c).addScaledVector(N, ca * rr).addScaledVector(B, sa * rr));
+      const rr = (r + amp * h * 2) * (o.radialMod ? o.radialMod(a, s) : 1);
+      const v = new THREE.Vector3().copy(c).addScaledVector(N, ca * rr).addScaledVector(B, sa * rr);
+      if (o.endTilt && i === rows) v.addScaledVector(T, o.endTilt * r * ca);
+      row.push(v);
     }
     verts.push(row);
     ring.push(row);
