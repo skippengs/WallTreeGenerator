@@ -78,6 +78,8 @@ gui.add(params, 'trunkHeight', 0, 80, 1).name('Trunk height').onChange(schedule)
 gui.add(params, 'trunkRadius', 1, 30, 0.5).name('Trunk radius').onChange(schedule);
 gui.add({ exportSTL }, 'exportSTL').name('Download STL');
 
+if (window.innerWidth < 600) gui.close();
+
 function resize() {
   const w = window.innerWidth;
   const h = window.innerHeight;
